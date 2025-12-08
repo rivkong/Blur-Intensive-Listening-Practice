@@ -12,7 +12,7 @@ export const MOCK_MATERIALS: Material[] = [
     category: 'Psychology',
     difficulty: 'Medium',
     duration: '1:45',
-    imageUrl: 'https://picsum.photos/seed/silence/800/600',
+    imageUrl: 'https://image.pollinations.ai/prompt/serene%20foggy%20lake%20minimalist%20silence%20nature?width=800&height=600&nologo=true',
     audioUrl: 'https://www2.cs.uic.edu/~i101/SoundFiles/StarWars3.wav', // Just a placeholder sound for demo mechanics
     segments: [
       { id: 's1', startTime: 0, endTime: 4, text: "In a world that never stops talking, silence has become a rare commodity." },
@@ -34,7 +34,7 @@ export const MOCK_MATERIALS: Material[] = [
     category: 'Health',
     difficulty: 'Medium',
     duration: '3:45',
-    imageUrl: 'https://picsum.photos/seed/stress_management/800/600',
+    imageUrl: 'https://image.pollinations.ai/prompt/calm%20peaceful%20mind%20yoga%20zen%20stones?width=800&height=600&nologo=true',
     audioUrl: '', // Simulation mode
     segments: [
       { id: 't1', startTime: 0, endTime: 12, text: "Hello everyone, and thanks for coming. I'd like to introduce myself. I'm Tara Sorenson, and I'm a public health nurse." },
@@ -62,7 +62,7 @@ export const MOCK_MATERIALS: Material[] = [
     category: 'Technology',
     difficulty: 'Hard',
     duration: '2:10',
-    imageUrl: 'https://picsum.photos/seed/ai/800/600',
+    imageUrl: 'https://image.pollinations.ai/prompt/futuristic%20artificial%20intelligence%20cyberspace%20blue%20nodes?width=800&height=600&nologo=true',
     audioUrl: '', 
     segments: [
       { id: 'a1', startTime: 0, endTime: 5, text: "Artificial Intelligence has transitioned from science fiction to everyday reality in less than a decade." },
@@ -79,7 +79,7 @@ export const MOCK_MATERIALS: Material[] = [
     category: 'Lifestyle',
     difficulty: 'Easy',
     duration: '1:15',
-    imageUrl: 'https://picsum.photos/seed/morning/800/600',
+    imageUrl: 'https://image.pollinations.ai/prompt/cozy%20morning%20sunlight%20coffee%20book%20fresh%20start?width=800&height=600&nologo=true',
     audioUrl: '',
     segments: [
       { id: 'm1', startTime: 0, endTime: 6, text: "The way you start your morning can set the tone for the entire day." },

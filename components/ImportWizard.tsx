@@ -116,7 +116,8 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ onClose, onImport })
         category: "Imported",
         difficulty: "Medium",
         duration: durationStr,
-        imageUrl: `https://picsum.photos/seed/${Date.now()}/800/600`, // Random generic image
+        // Use title to generate a relevant image
+        imageUrl: `https://image.pollinations.ai/prompt/${encodeURIComponent(title + " conceptual illustration")}?width=800&height=600&nologo=true`,
         audioUrl,
         segments
       };

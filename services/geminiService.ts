@@ -71,7 +71,8 @@ export const generateMaterial = async (topic: string): Promise<Material | null> 
       category: data.category || "General",
       difficulty: data.difficulty || "Medium",
       duration: "1:00", // Mock duration
-      imageUrl: `https://picsum.photos/seed/${encodeURIComponent(topic)}/800/600`,
+      // Use Pollinations AI to generate a relevant image based on the topic
+      imageUrl: `https://image.pollinations.ai/prompt/${encodeURIComponent(topic + " cinematic lighting abstract wallpaper")}?width=800&height=600&nologo=true`,
       audioUrl: "", // No real audio for generated content in this demo
       segments: data.segments.map((s: any, idx: number) => ({
         id: `gen-${idx}`,
