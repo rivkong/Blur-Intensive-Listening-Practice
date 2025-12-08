@@ -1,7 +1,7 @@
 
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { Material, Segment } from '../types';
-import { ArrowLeft, Play, Pause, RotateCcw, Eye, EyeOff, Mic, Square, AlignJustify, SkipBack, SkipForward, Repeat, Download, ChevronLeft, ChevronRight, Activity } from 'lucide-react';
+import { ArrowLeft, Play, Pause, RotateCcw, Eye, EyeOff, Mic, Square, AlignJustify, SkipBack, SkipForward, PauseOctagon, Download, ChevronLeft, ChevronRight, Activity } from 'lucide-react';
 import { mergeAudioBlobs } from '../utils/audioUtils';
 
 interface BlurReaderProps {
@@ -236,10 +236,12 @@ export const BlurReader: React.FC<BlurReaderProps> = ({ material, onBack }) => {
            const t = audioRef.current.currentTime;
            if (activeIndex !== -1) {
                const currentSeg = material.segments[activeIndex];
-               if (currentSeg && t >= currentSeg.endTime) {
+               // Stop slightly before the absolute end (50ms) to prevent bleeding into next segment
+               // and ensure immediate "stop" feel.
+               if (currentSeg && t >= currentSeg.endTime - 0.05) {
                    audioRef.current.pause();
-                   audioRef.current.currentTime = currentSeg.startTime;
-                   setCurrentTime(currentSeg.startTime);
+                   // Clamp to just inside the segment to keep UI focus on current sentence
+                   audioRef.current.currentTime = currentSeg.endTime - 0.01;
                    setIsPlaying(false);
                    return;
                }
@@ -295,8 +297,12 @@ export const BlurReader: React.FC<BlurReaderProps> = ({ material, onBack }) => {
       } else {
         if (sentenceMode && activeIndex !== -1) {
              const currentSeg = material.segments[activeIndex];
+             // If we are at the very start, play.
              if (currentSeg && Math.abs(audioRef.current.currentTime - currentSeg.startTime) < 0.1) {
-             } else if (currentSeg && audioRef.current.currentTime >= currentSeg.endTime - 0.2) {
+                 // OK
+             } 
+             // If we are at the end (paused from auto-pause), jump to next segment
+             else if (currentSeg && audioRef.current.currentTime >= currentSeg.endTime - 0.1) {
                  const nextIndex = Math.min(activeIndex + 1, material.segments.length - 1);
                  const nextTime = material.segments[nextIndex].startTime;
                  audioRef.current.currentTime = nextTime;
@@ -571,8 +577,8 @@ export const BlurReader: React.FC<BlurReaderProps> = ({ material, onBack }) => {
                     : 'bg-zinc-800/50 border-zinc-700 text-zinc-400'
                 }`}
              >
-                <Repeat size={14} />
-                <span className="text-xs font-bold uppercase tracking-wider">Loop Sentences</span>
+                <PauseOctagon size={14} className={sentenceMode ? "fill-current" : ""} />
+                <span className="text-xs font-bold uppercase tracking-wider">Auto-Pause</span>
              </button>
 
             <div className="flex items-center space-x-2 bg-zinc-900/80 backdrop-blur-md rounded-full p-1 pr-4 border border-zinc-800">
