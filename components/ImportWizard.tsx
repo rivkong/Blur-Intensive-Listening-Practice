@@ -1,5 +1,6 @@
+
 import React, { useState, useRef } from 'react';
-import { X, Upload, FileAudio, FileText, Check, Loader2, Music, Clock, AlertCircle } from 'lucide-react';
+import { X, Upload, FileAudio, FileText, Check, Loader2, Music, Clock } from 'lucide-react';
 import { Material, Segment } from '../types';
 
 interface ImportWizardProps {
@@ -7,45 +8,29 @@ interface ImportWizardProps {
   onImport: (material: Material) => void;
 }
 
-// Helper: Robust sentence splitting
+// Strict Sentence Splitting using Intl.Segmenter
+// This avoids breaking sentences at commas, ensuring "Sentence Mode" works correctly.
 const splitIntoSentences = (text: string): string[] => {
-  // 1. Normalize whitespace: replace newlines and multiple spaces with single space.
-  // This is crucial for handling text copied from PDFs where sentences are broken by line breaks.
+  // Normalize whitespace
   const normalized = text.replace(/\s+/g, ' ').trim();
   
-  // 2. Try Intl.Segmenter (Modern browsers) - Best accuracy for abbreviations (Mr., etc.) and multilingual support
   if (typeof Intl !== 'undefined' && (Intl as any).Segmenter) {
-    // undefined locale allows the browser to detect best fit or default, usually handling mixed EN/CN well
-    const segmenter = new (Intl as any).Segmenter(undefined, { granularity: 'sentence' });
-    const segments = [];
-    // @ts-ignore
-    for (const { segment } of segmenter.segment(normalized)) {
-      const s = segment.trim();
-      if (s.length > 0) segments.push(s);
-    }
-    return segments;
+      const segmenter = new (Intl as any).Segmenter('en', { granularity: 'sentence' });
+      const segments = [...segmenter.segment(normalized)];
+      return segments.map((s: any) => s.segment.trim()).filter(s => s.length > 0);
   }
 
-  // 3. Fallback Regex (English + CJK punctuation)
-  // Matches sequence of characters ending with punctuation OR end of string.
-  // [^...] matches body, [.!?。！？]* matches optional trailing punctuation.
-  const regex = /[^.!?。！？]+[.!?。！？]*/g;
-  const matches = normalized.match(regex);
-  
-  if (matches) {
-    return matches.map(s => s.trim()).filter(s => s.length > 0);
-  }
-  
-  // Last resort: return whole text
-  return [normalized];
+  // Fallback regex for browsers without Segmenter support
+  // Splits on . ! ? or Chinese equivalents, keeping the punctuation.
+  const processed = normalized.replace(/([.!?。！？])/g, "$1|");
+  return processed.split('|').map(s => s.trim()).filter(s => s.length > 0);
 };
 
 export const ImportWizard: React.FC<ImportWizardProps> = ({ onClose, onImport }) => {
-  const [step, setStep] = useState(1); // 1: Input, 2: Processing
   const [title, setTitle] = useState('');
   const [text, setText] = useState('');
   const [audioFile, setAudioFile] = useState<File | null>(null);
-  const [offset, setOffset] = useState<string>('0'); // Text start time in seconds
+  const [offset, setOffset] = useState<string>('0'); 
   const [isProcessing, setIsProcessing] = useState(false);
   const audioInputRef = useRef<HTMLInputElement>(null);
 
@@ -60,39 +45,34 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ onClose, onImport })
     setIsProcessing(true);
 
     try {
-      // 1. Create Audio URL
       const audioUrl = URL.createObjectURL(audioFile);
 
-      // 2. Get Audio Duration
       const duration = await new Promise<number>((resolve, reject) => {
         const audio = new Audio(audioUrl);
         audio.onloadedmetadata = () => resolve(audio.duration);
         audio.onerror = () => reject("Could not load audio");
       });
 
-      // 3. Parse Offset
       const offsetSeconds = parseFloat(offset) || 0;
       if (offsetSeconds >= duration) {
         throw new Error("Offset cannot be longer than the audio duration.");
       }
 
-      // 4. Segment Text
-      // Using the robust splitter to ensure whole sentences
+      // Split by Sentence strictly
       const cleanedSegments = splitIntoSentences(text);
       
       if (cleanedSegments.length === 0) {
           throw new Error("Could not find any text segments.");
       }
 
-      // 5. Calculate Timestamps (Proportional Distribution)
-      // This distributes the text over the "effective" audio duration (Total - Offset)
+      // Calculate Timestamps (Proportional Distribution)
+      // Note: This is an estimation. Real apps would need manual alignment tools.
       const effectiveDuration = duration - offsetSeconds;
       const totalChars = cleanedSegments.reduce((acc, s) => acc + s.length, 0);
       
       let currentTime = offsetSeconds; 
       
       const segments: Segment[] = cleanedSegments.map((s, i) => {
-        // Safe division
         const segmentDuration = totalChars > 0 ? (s.length / totalChars) * effectiveDuration : 0;
         const seg: Segment = {
           id: `imp-${Date.now()}-${i}`,
@@ -104,7 +84,6 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ onClose, onImport })
         return seg;
       });
 
-      // 6. Create Material Object
       const minutes = Math.floor(duration / 60);
       const seconds = Math.floor(duration % 60);
       const durationStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
@@ -116,7 +95,6 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ onClose, onImport })
         category: "Imported",
         difficulty: "Medium",
         duration: durationStr,
-        // Use title to generate a relevant image
         imageUrl: `https://image.pollinations.ai/prompt/${encodeURIComponent(title + " conceptual illustration")}?width=800&height=600&nologo=true`,
         audioUrl,
         segments
@@ -198,31 +176,20 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ onClose, onImport })
             </div>
           </div>
 
-          {/* Intro Offset Config */}
-          <div className="p-4 rounded-xl bg-zinc-900/50 border border-zinc-800 space-y-3">
-             <div className="flex items-start gap-3">
-                <Clock className="text-zinc-400 mt-0.5" size={18} />
-                <div className="flex-1 space-y-1">
-                    <label className="text-sm font-medium text-zinc-300 block">Intro Offset (Seconds)</label>
-                    <p className="text-xs text-zinc-500">
-                        Does the audio have an intro (music/host) that isn't in your text? 
-                        Enter how many seconds to skip before the text actually starts.
-                    </p>
-                </div>
+          {/* Offset Config */}
+          <div className="p-4 rounded-xl bg-zinc-900/50 border border-zinc-800 space-y-2">
+             <label className="text-xs font-semibold uppercase text-zinc-500 tracking-wider block">Intro Offset (s)</label>
+             <div className="flex items-center gap-2">
+                <Clock size={16} className="text-zinc-400" />
                 <input 
                   type="number" 
                   min="0"
                   value={offset}
                   onChange={(e) => setOffset(e.target.value)}
-                  className="w-20 bg-black/50 border border-zinc-700 rounded-lg px-3 py-2 text-white text-center focus:border-sky-500 focus:outline-none"
+                  className="w-full bg-black/50 border border-zinc-700 rounded-lg px-2 py-1 text-white text-sm focus:border-sky-500 focus:outline-none"
                 />
              </div>
-             {Number(offset) > 0 && (
-                 <div className="flex items-center gap-2 text-xs text-amber-500 bg-amber-500/10 p-2 rounded-lg">
-                    <AlertCircle size={14} />
-                    <span>Text will automatically align starting at {offset}s.</span>
-                 </div>
-             )}
+             <p className="text-[10px] text-zinc-500 pt-1">Skip intro music/silence to better align text.</p>
           </div>
 
           {/* Transcript Input */}
@@ -232,7 +199,7 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ onClose, onImport })
               <textarea 
                 value={text}
                 onChange={(e) => setText(e.target.value)}
-                placeholder="Paste the full transcript here. We will automatically align it with the audio..."
+                placeholder="Paste the full transcript here. We will split it into sentences for you..."
                 className="w-full h-32 bg-zinc-900/50 border border-zinc-700 rounded-xl p-4 text-sm text-zinc-300 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition-all placeholder:text-zinc-600 resize-none"
               />
               <FileText className="absolute bottom-4 right-4 text-zinc-600 pointer-events-none" size={16} />

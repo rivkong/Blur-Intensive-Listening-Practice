@@ -22,7 +22,6 @@ export default function App() {
       const saved = localStorage.getItem('blurlisten_materials');
       if (saved) {
         const parsed = JSON.parse(saved);
-        // We merge saved materials with mocks, avoiding duplicates by ID
         const mockIds = new Set(MOCK_MATERIALS.map(m => m.id));
         const customMaterials = parsed.filter((m: Material) => !mockIds.has(m.id));
         setMaterials([...MOCK_MATERIALS, ...customMaterials]);
@@ -39,15 +38,7 @@ export default function App() {
   // Save to LocalStorage whenever materials change
   useEffect(() => {
     if (!hasLoaded) return;
-    
-    // Filter out materials that are mocks (we don't need to double-save them if they are in code)
-    // Also, strictly speaking, we can't persistent Audio BLOB URLs effectively in localStorage.
-    // So if the user refreshes, imported audio might break unless re-uploaded.
-    // For this demo, we will persist the Text Structure, but the audioUrl might become invalid.
-    
     const customMaterials = materials.filter(m => !MOCK_MATERIALS.some(mock => mock.id === m.id));
-    
-    // Safety check for size (simplified)
     try {
        localStorage.setItem('blurlisten_materials', JSON.stringify(customMaterials));
     } catch (e) {
@@ -72,8 +63,6 @@ export default function App() {
   const handleImport = (material: Material) => {
     setMaterials(prev => [material, ...prev]);
     setShowImport(false);
-    // Optional: Immediately open the new material
-    // setActiveMaterial(material); 
   };
 
   if (activeMaterial) {
@@ -83,29 +72,44 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#000000] text-zinc-100 selection:bg-sky-500/30 pb-20">
       
-      {/* Immersive Header (App Store style) */}
-      <header className="pt-16 pb-8 px-6 max-w-lg mx-auto md:max-w-2xl lg:max-w-3xl">
-        <div className="flex items-center justify-between mb-2">
+      {/* Immersive Header */}
+      <header className="pt-10 pb-8 px-6 max-w-lg mx-auto md:max-w-2xl lg:max-w-3xl">
+        
+        {/* Logo Section */}
+        <div className="flex flex-col items-center justify-center mb-10 space-y-2">
+            <div className="relative">
+                {/* Simulated Logo based on user attachment description style */}
+                <h1 className="font-logo text-5xl md:text-6xl tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-sky-400 via-teal-400 to-orange-400 drop-shadow-lg">
+                    LeadYouth
+                </h1>
+                <div className="absolute -top-4 -right-6 text-orange-400 transform rotate-12">
+                   <Sparkles size={24} fill="currentColor" />
+                </div>
+            </div>
+            <p className="text-sm md:text-base font-medium tracking-wide text-zinc-400 uppercase">
+                Discover English, Explore the World
+            </p>
+        </div>
+
+        {/* Date & Tools */}
+        <div className="flex items-center justify-between mb-4">
             <span className="text-zinc-500 text-sm font-semibold uppercase tracking-widest">
                 {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
             </span>
             <div className="flex gap-4">
-               {/* Import Button */}
                <button 
                  onClick={() => setShowImport(true)}
-                 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-sky-500 hover:text-sky-400 transition-colors"
+                 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-sky-500 hover:text-sky-400 transition-colors bg-sky-500/10 px-3 py-1.5 rounded-full"
                >
                  <Upload size={14} />
                  Import
                </button>
-               <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center">
-                    <Headphones size={16} className="text-sky-500" />
-               </div>
             </div>
         </div>
-        <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-white mb-8">
-            Today
-        </h1>
+        
+        <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-white mb-8">
+            Today's Practice
+        </h2>
 
         {/* Generator Mini-Form */}
         <form onSubmit={handleGenerate} className="relative group mb-12">
@@ -116,7 +120,7 @@ export default function App() {
                 type="text" 
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
-                placeholder="Generate new topic..." 
+                placeholder="Generate a topic (e.g. 'Coffee History')..." 
                 className="flex-1 bg-transparent border-none focus:ring-0 text-white placeholder-zinc-500 px-4 py-2 text-lg"
             />
             <button 

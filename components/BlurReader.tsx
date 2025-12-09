@@ -1,7 +1,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { Material, Segment } from '../types';
-import { ArrowLeft, Play, Pause, RotateCcw, Eye, EyeOff, Mic, Square, AlignJustify, SkipBack, SkipForward, Repeat, Download, ChevronLeft, ChevronRight, Settings2, Trash2, Infinity, Repeat1 } from 'lucide-react';
+import { ArrowLeft, Play, Pause, Square, AlignJustify, SkipBack, SkipForward, Repeat, Download, ChevronLeft, ChevronRight, Settings2, Trash2, Mic, Eye, EyeOff, BookOpen, MessageSquare } from 'lucide-react';
 import { mergeAudioBlobs } from '../utils/audioUtils';
 
 interface BlurReaderProps {
@@ -10,8 +10,8 @@ interface BlurReaderProps {
 }
 
 type ViewMode = 'visible' | 'blur' | 'blind';
-type PlayMode = 'article' | 'sentence';
-type LoopMode = 1 | 2 | 3 | typeof Number.POSITIVE_INFINITY;
+type PlaybackMode = 'article' | 'sentence';
+type LoopSetting = number;
 
 export const BlurReader: React.FC<BlurReaderProps> = ({ material, onBack }) => {
   // Playback State
@@ -20,11 +20,9 @@ export const BlurReader: React.FC<BlurReaderProps> = ({ material, onBack }) => {
   const [duration, setDuration] = useState(0);
   const [activeIndex, setActiveIndex] = useState(-1);
   
-  // Drill Settings
-  const [playMode, setPlayMode] = useState<PlayMode>('article'); // 'article' = continuous, 'sentence' = pause/loop at end
-  const [loopCount, setLoopCount] = useState<LoopMode>(1);
-
-  // Visual State
+  // Settings
+  const [playbackMode, setPlaybackMode] = useState<PlaybackMode>('sentence'); // Default to drilling
+  const [loopSetting, setLoopSetting] = useState<LoopSetting>(1);
   const [viewMode, setViewMode] = useState<ViewMode>('blur');
   
   // Recording State
@@ -42,20 +40,21 @@ export const BlurReader: React.FC<BlurReaderProps> = ({ material, onBack }) => {
   const preciseCheckRef = useRef<number>();
   const simulationRef = useRef<number | null>(null);
   
-  // Track how many times the current segment has played
-  const currentPlayCountRef = useRef(0);
-  const lastActiveIndexRef = useRef(-1);
+  // CRITICAL: Synchronous Refs
+  const activeIndexRef = useRef(-1);
+  const playCountRef = useRef(0); // Tracks how many times current sentence has played
 
   // --- Initialization ---
   useEffect(() => {
     setActiveIndex(-1);
+    activeIndexRef.current = -1;
     setCurrentTime(0);
     setIsPlaying(false);
+    playCountRef.current = 0;
     setUserRecordings({});
     segmentRefs.current = segmentRefs.current.slice(0, material.segments.length);
-    currentPlayCountRef.current = 0;
     
-    // Set duration for mock items immediately
+    // Set duration for mock items
     if (!material.audioUrl) {
         const lastSeg = material.segments[material.segments.length - 1];
         setDuration(lastSeg ? lastSeg.endTime : 60);
@@ -65,53 +64,50 @@ export const BlurReader: React.FC<BlurReaderProps> = ({ material, onBack }) => {
   // --- Keyboard Shortcuts ---
   useEffect(() => {
       const handleKeyDown = (e: KeyboardEvent) => {
-          if (!material.audioUrl || !audioRef.current) return;
+          if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
 
-          // Seek -3s
-          if (e.code === 'ArrowLeft') {
-              seekRelative(-3);
-          }
-          // Seek +3s
-          if (e.code === 'ArrowRight') {
-              seekRelative(3);
-          }
-          // Toggle Play
-          if (e.code === 'Space') {
-              e.preventDefault(); 
-              togglePlay();
-          }
+          if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+          if (e.key === 'Control') { e.preventDefault(); replayCurrent(); }
+          if (e.code === 'ArrowUp') { e.preventDefault(); cycleViewMode(); }
+          if (e.code === 'ArrowLeft') { e.preventDefault(); skipToSegment('prev'); }
+          if (e.code === 'ArrowRight') { e.preventDefault(); skipToSegment('next'); }
+          if (e.key === ',' || e.key === '<') { seekRelative(-2); }
+          if (e.key === '.' || e.key === '>') { seekRelative(2); }
       };
       window.addEventListener('keydown', handleKeyDown);
       return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [material.audioUrl, isPlaying]);
+  }, [material.audioUrl, isPlaying, viewMode]);
 
 
-  // --- High Precision Loop (The Core Logic) ---
+  // --- High Precision Loop (Core Logic) ---
   useEffect(() => {
     if (isPlaying && material.audioUrl) {
       const check = () => {
         if (audioRef.current) {
            const t = audioRef.current.currentTime;
+           const idx = activeIndexRef.current;
            
-           // Logic for Sentence Mode (Drilling)
-           if (playMode === 'sentence' && activeIndex !== -1) {
-               const currentSeg = material.segments[activeIndex];
-               
-               // If we reached the end of the sentence
-               if (currentSeg && t >= currentSeg.endTime - 0.05) {
-                   
-                   // Check Loop Count
-                   // We increment play count when we hit the end
-                   if (currentPlayCountRef.current < loopCount - 1) {
-                        // Replay
-                        currentPlayCountRef.current += 1;
-                        audioRef.current.currentTime = currentSeg.startTime;
+           // Logic for SENTENCE MODE
+           if (playbackMode === 'sentence' && idx !== -1) {
+               const seg = material.segments[idx];
+               const endTime = seg.endTime;
+               const startTime = seg.startTime;
+
+               // Use a slightly larger buffer (0.15s) to catch the end before it bleeds into next sentence
+               if (t >= endTime - 0.15) {
+                   // Increment count
+                   playCountRef.current += 1;
+
+                   if (playCountRef.current < loopSetting) {
+                       // Loop Again: Rewind to start and Keep Playing
+                       audioRef.current.currentTime = startTime;
                    } else {
-                        // Finished all loops
-                        audioRef.current.pause();
-                        audioRef.current.currentTime = currentSeg.endTime - 0.01; // Clamp to end
-                        setIsPlaying(false);
-                        // Do not reset play count here; wait for manual action to reset
+                       // Loop Finished: Rewind to start and PAUSE
+                       audioRef.current.pause();
+                       audioRef.current.currentTime = startTime;
+                       setCurrentTime(startTime);
+                       setIsPlaying(false);
+                       playCountRef.current = 0; // Reset for next interaction
                    }
                }
            }
@@ -124,10 +120,10 @@ export const BlurReader: React.FC<BlurReaderProps> = ({ material, onBack }) => {
     return () => {
         if (preciseCheckRef.current) cancelAnimationFrame(preciseCheckRef.current);
     };
-  }, [isPlaying, playMode, loopCount, activeIndex, material.audioUrl, material.segments]);
+  }, [isPlaying, playbackMode, loopSetting, material.audioUrl, material.segments]);
 
 
-  // --- Simulation Mode (For Mock Content) ---
+  // --- Simulation Mode (Mock) ---
   const startSimulation = (startTimeOffset: number) => {
     if (simulationRef.current) window.clearInterval(simulationRef.current);
     const startTimestamp = Date.now() - (startTimeOffset * 1000);
@@ -135,22 +131,23 @@ export const BlurReader: React.FC<BlurReaderProps> = ({ material, onBack }) => {
     simulationRef.current = window.setInterval(() => {
         const newTime = (Date.now() - startTimestamp) / 1000;
         
-        // Simulation Sentence Mode Logic
-        if (playMode === 'sentence') {
-             const currentSeg = material.segments.find(s => newTime >= s.startTime && newTime <= s.endTime);
-             if (currentSeg && newTime >= currentSeg.endTime) {
-                 
-                 if (currentPlayCountRef.current < loopCount - 1) {
-                     currentPlayCountRef.current += 1;
-                     startSimulation(currentSeg.startTime);
-                     return;
+        // Sim Loop Logic
+        if (playbackMode === 'sentence' && activeIndexRef.current !== -1) {
+            const idx = activeIndexRef.current;
+            const seg = material.segments[idx];
+
+            if (newTime >= seg.endTime) {
+                 playCountRef.current += 1;
+                 if (playCountRef.current < loopSetting) {
+                     startSimulation(seg.startTime);
                  } else {
-                     setIsPlaying(false);
-                     setCurrentTime(currentSeg.startTime); 
                      if (simulationRef.current) window.clearInterval(simulationRef.current);
-                     return;
+                     setIsPlaying(false);
+                     setCurrentTime(seg.startTime);
+                     playCountRef.current = 0;
                  }
-             }
+                 return;
+            }
         }
 
         if (newTime >= duration && duration > 0) {
@@ -166,7 +163,6 @@ export const BlurReader: React.FC<BlurReaderProps> = ({ material, onBack }) => {
   // --- Playback Controls ---
 
   const togglePlay = () => {
-    // If user is listening to their own recording, stop that first
     if (isUserPlaying && userAudioRef.current) {
         userAudioRef.current.pause();
         setIsUserPlaying(false);
@@ -179,20 +175,16 @@ export const BlurReader: React.FC<BlurReaderProps> = ({ material, onBack }) => {
         audioRef.current.pause();
         setIsPlaying(false);
       } else {
-        // If restarting in sentence mode from a finished state (end of segment)
-        if (playMode === 'sentence' && activeIndex !== -1) {
-             const currentSeg = material.segments[activeIndex];
-             // If we are at the end, this counts as a "Replay", so reset the loop counter and jump to start
-             if (currentSeg && audioRef.current.currentTime >= currentSeg.endTime - 0.1) {
-                currentPlayCountRef.current = 0;
-                audioRef.current.currentTime = currentSeg.startTime;
-             }
-        }
+        // Reset play count if we are starting fresh (optional, but good for UX)
+        // If we are resumed in middle, maybe don't reset? 
+        // Let's reset only if we are at the very start or end? 
+        // For simplicity, if manually toggled, we can continue current loop cycle or reset.
+        // Let's NOT reset playCountRef here so resuming works as expected (finishing the current loop).
+        
         audioRef.current.play().catch(e => console.error("Playback error", e));
         setIsPlaying(true);
       }
     } else {
-      // Simulation
       if (isPlaying) {
         if (simulationRef.current) window.clearInterval(simulationRef.current);
         setIsPlaying(false);
@@ -201,6 +193,25 @@ export const BlurReader: React.FC<BlurReaderProps> = ({ material, onBack }) => {
         startSimulation(currentTime);
       }
     }
+  };
+  
+  const replayCurrent = () => {
+      if (activeIndexRef.current === -1) return;
+      
+      const targetTime = material.segments[activeIndexRef.current].startTime;
+      playCountRef.current = 0; // Reset loop count on manual replay
+      
+      if (material.audioUrl && audioRef.current) {
+          audioRef.current.currentTime = targetTime;
+          setCurrentTime(targetTime);
+          if (!isPlaying) {
+              audioRef.current.play();
+              setIsPlaying(true);
+          }
+      } else if (!material.audioUrl) {
+          startSimulation(targetTime);
+          setIsPlaying(true);
+      }
   };
 
   const handleTimeUpdate = () => {
@@ -211,33 +222,37 @@ export const BlurReader: React.FC<BlurReaderProps> = ({ material, onBack }) => {
   };
 
   const skipToSegment = (direction: 'prev' | 'next') => {
-      let targetIndex = activeIndex;
+      let targetIndex = activeIndexRef.current;
       
-      if (direction === 'prev') {
-          const currentSeg = material.segments[activeIndex];
-          // If we are > 2 seconds into a segment, restart it. Otherwise go to previous.
-          if (currentSeg && (currentTime - currentSeg.startTime > 2)) {
-             targetIndex = activeIndex;
-          } else {
-             targetIndex = activeIndex - 1;
-          }
+      if (targetIndex === -1) {
+          targetIndex = 0;
       } else {
-          targetIndex = activeIndex + 1;
+          if (direction === 'prev') {
+              const currentSeg = material.segments[targetIndex];
+              // If we are more than 2s into the segment, restart it. Otherwise go to prev.
+              if (currentSeg && (currentTime - currentSeg.startTime > 2)) {
+                 targetIndex = targetIndex; 
+              } else {
+                 targetIndex = targetIndex - 1;
+              }
+          } else {
+              targetIndex = targetIndex + 1;
+          }
       }
 
-      // Clamp
       if (targetIndex < 0) targetIndex = 0;
       if (targetIndex >= material.segments.length) targetIndex = material.segments.length - 1;
 
-      // Reset play count when manually changing segment
-      currentPlayCountRef.current = 0;
-
+      // Update refs immediately to prevent race conditions in loop
+      activeIndexRef.current = targetIndex;
+      setActiveIndex(targetIndex);
+      playCountRef.current = 0; // Reset loop count for new sentence
+      
       const targetTime = material.segments[targetIndex]?.startTime ?? 0;
       setCurrentTime(targetTime);
       
       if (material.audioUrl && audioRef.current) {
           audioRef.current.currentTime = targetTime;
-          // In drill mode, we usually auto-play when skipping
           audioRef.current.play();
           setIsPlaying(true);
       } else if (!material.audioUrl) {
@@ -255,44 +270,45 @@ export const BlurReader: React.FC<BlurReaderProps> = ({ material, onBack }) => {
   };
 
   const handleSegmentClick = (segment: Segment) => {
-      // Reset play count when clicking a specific segment
-      currentPlayCountRef.current = 0;
+      const idx = material.segments.findIndex(s => s.id === segment.id);
+      activeIndexRef.current = idx;
+      setActiveIndex(idx);
+      playCountRef.current = 0;
 
       if (audioRef.current) {
           audioRef.current.currentTime = segment.startTime;
           audioRef.current.play();
           setIsPlaying(true);
-          const idx = material.segments.findIndex(s => s.id === segment.id);
-          if (idx !== -1) setActiveIndex(idx);
       } else if (!material.audioUrl) {
           startSimulation(segment.startTime);
           setIsPlaying(true);
       }
   };
 
-  // --- Scroll Sync & Active Index Logic ---
+  // --- Scroll Sync ---
   useEffect(() => {
     const idx = material.segments.findIndex(
       (seg) => currentTime >= seg.startTime && currentTime < seg.endTime
     );
     
-    // If index changed, we might need to reset play count if we drifted naturally
-    if (idx !== -1 && idx !== lastActiveIndexRef.current) {
-        lastActiveIndexRef.current = idx;
-        setActiveIndex(idx);
-        currentPlayCountRef.current = 0; // Reset loop count on new segment entry
-
+    // Only update active index if we are in Article Mode OR if we haven't set one yet.
+    // In Sentence Mode, we want manual control, but checking against time is still good for validation.
+    // However, in Sentence Mode, we manually set activeIndexRef when skipping/clicking.
+    // The only time this useEffect is critical is for Article Mode where time flows freely.
+    if (idx !== -1 && idx !== activeIndex) {
+        if (playbackMode === 'article') {
+            activeIndexRef.current = idx;
+            setActiveIndex(idx);
+        }
+        // Always scroll
         if (segmentRefs.current[idx]) {
             segmentRefs.current[idx]?.scrollIntoView({
-            behavior: 'smooth',
-            block: 'center',
+                behavior: 'smooth',
+                block: 'center',
             });
         }
-    } else if (idx === -1 && activeIndex === -1 && material.segments.length > 0) {
-        setActiveIndex(0);
-        lastActiveIndexRef.current = 0;
     }
-  }, [currentTime, material.segments]);
+  }, [currentTime, material.segments, playbackMode]);
 
   useEffect(() => {
     return () => {
@@ -301,8 +317,7 @@ export const BlurReader: React.FC<BlurReaderProps> = ({ material, onBack }) => {
     };
   }, []);
 
-  // --- Shadowing / Recording Logic ---
-  
+  // --- Shadowing Handlers ---
   const toggleRecording = async () => {
     if (activeIndex === -1) return;
 
@@ -310,7 +325,6 @@ export const BlurReader: React.FC<BlurReaderProps> = ({ material, onBack }) => {
         mediaRecorderRef.current?.stop();
         setIsRecording(false);
     } else {
-        // Stop playback when recording starts
         if (isPlaying) togglePlay();
 
         try {
@@ -321,7 +335,7 @@ export const BlurReader: React.FC<BlurReaderProps> = ({ material, onBack }) => {
             mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
             mediaRecorder.onstop = () => {
                 const blob = new Blob(chunks, { type: 'audio/webm' });
-                const currentSegId = material.segments[activeIndex].id;
+                const currentSegId = material.segments[activeIndexRef.current].id;
                 setUserRecordings(prev => ({ ...prev, [currentSegId]: blob }));
                 stream.getTracks().forEach(track => track.stop());
             };
@@ -342,7 +356,6 @@ export const BlurReader: React.FC<BlurReaderProps> = ({ material, onBack }) => {
       const blob = userRecordings[segId];
       if (!blob) return;
 
-      // Stop main audio
       if (isPlaying && audioRef.current) {
           audioRef.current.pause();
           setIsPlaying(false);
@@ -371,19 +384,16 @@ export const BlurReader: React.FC<BlurReaderProps> = ({ material, onBack }) => {
   const handleExport = async () => {
       const orderedBlobs: Blob[] = [];
       let hasRecordings = false;
-
       for (const seg of material.segments) {
           if (userRecordings[seg.id]) {
               orderedBlobs.push(userRecordings[seg.id]);
               hasRecordings = true;
           }
       }
-
       if (!hasRecordings) {
           alert("No recordings found to export.");
           return;
       }
-
       setIsExporting(true);
       try {
           const wavBlob = await mergeAudioBlobs(orderedBlobs);
@@ -402,11 +412,13 @@ export const BlurReader: React.FC<BlurReaderProps> = ({ material, onBack }) => {
       setIsExporting(false);
   };
 
-  // --- Helper: View Modes ---
+  // --- Helper Icons/Labels ---
   const cycleViewMode = () => {
-      if (viewMode === 'visible') setViewMode('blur');
-      else if (viewMode === 'blur') setViewMode('blind');
-      else setViewMode('visible');
+      setViewMode(prev => {
+          if (prev === 'visible') return 'blur';
+          if (prev === 'blur') return 'blind';
+          return 'visible';
+      });
   };
 
   const getViewModeIcon = () => {
@@ -415,41 +427,26 @@ export const BlurReader: React.FC<BlurReaderProps> = ({ material, onBack }) => {
       return <EyeOff size={20} />;
   };
 
-  const cycleLoopMode = () => {
-      if (loopCount === 1) setLoopCount(2);
-      else if (loopCount === 2) setLoopCount(3);
-      else if (loopCount === 3) setLoopCount(Number.POSITIVE_INFINITY);
-      else setLoopCount(1);
+  const cycleLoopSetting = () => {
+      setLoopSetting(prev => {
+          if (prev === 1) return 2;
+          if (prev === 2) return 3;
+          if (prev === 3) return Infinity;
+          return 1;
+      });
   };
 
-  const getLoopIcon = () => {
-      if (loopCount === Number.POSITIVE_INFINITY) return <Infinity size={18} />;
-      if (loopCount === 1) return <Repeat1 size={18} />;
-      return (
-        <div className="relative">
-            <Repeat size={18} />
-            <span className="absolute -top-1 -right-1 text-[8px] font-bold bg-sky-500 text-black rounded-full w-3 h-3 flex items-center justify-center">
-                {loopCount}
-            </span>
-        </div>
-      );
-  };
-
-  const formatTime = (time: number) => {
-    const min = Math.floor(time / 60);
-    const sec = Math.floor(time % 60);
-    return `${min}:${sec.toString().padStart(2, '0')}`;
+  const getLoopLabel = () => {
+      if (loopSetting === Infinity) return "∞";
+      return `${loopSetting}x`;
   };
 
   // --- Render ---
-
-  // Does the current active sentence have a recording?
   const hasCurrentRecording = activeIndex !== -1 && !!userRecordings[material.segments[activeIndex]?.id];
 
   return (
     <div className="fixed inset-0 z-50 bg-[#09090b] flex flex-col animate-in fade-in duration-300">
       
-      {/* Hidden Audio Elements */}
       {material.audioUrl && (
         <audio
           ref={audioRef}
@@ -470,7 +467,6 @@ export const BlurReader: React.FC<BlurReaderProps> = ({ material, onBack }) => {
         </button>
         
         <div className="flex items-center gap-3">
-             {/* View Mode Toggle */}
             <button 
                 onClick={cycleViewMode}
                 className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors"
@@ -491,7 +487,7 @@ export const BlurReader: React.FC<BlurReaderProps> = ({ material, onBack }) => {
                 <h1 className="text-2xl md:text-3xl font-serif font-bold text-white">{material.title}</h1>
             </div>
             
-            <div className="space-y-6">
+            <div className="space-y-4">
               {material.segments.map((seg, index) => {
                 const isActive = index === activeIndex;
                 const hasRec = !!userRecordings[seg.id];
@@ -502,40 +498,23 @@ export const BlurReader: React.FC<BlurReaderProps> = ({ material, onBack }) => {
                     ref={(el) => (segmentRefs.current[index] = el)}
                     onClick={() => handleSegmentClick(seg)}
                     className={`
-                        relative transition-all duration-300 ease-out cursor-pointer rounded-xl p-4 -mx-4 border border-transparent
+                        relative transition-all duration-300 ease-out cursor-pointer rounded-xl p-3 -mx-3 border border-transparent
                         ${isActive ? 'bg-zinc-800/40 border-zinc-700/50 shadow-lg' : 'opacity-60 hover:opacity-100 hover:bg-zinc-900'}
                     `}
                   >
-                     {/* Text Content */}
                      <p className={`text-xl md:text-2xl font-serif leading-relaxed transition-all duration-500 ${isActive ? 'text-zinc-100' : 'text-zinc-400'}`}>
                         {seg.text.split(/(\s+)/).map((part, i) => {
-                            if (viewMode === 'blind') {
-                                // In blind mode, replace non-space text with blocks
-                                return /\S/.test(part) 
-                                    ? <span key={i} className="bg-zinc-700 text-zinc-700 rounded-sm select-none mx-[1px]">_</span> 
-                                    : <span key={i}>{part}</span>;
-                            }
-                            // In Blur Mode, we apply the blur effect to ALL segments, including the active one
-                            if (viewMode === 'blur') {
-                                return (
-                                    <span 
-                                        key={i} 
-                                        // Active text is blurred just like inactive text in this mode, per user request
-                                        className="structure-blur"
-                                    >
-                                        {part}
-                                    </span>
-                                );
-                            }
-                            // Visible mode
-                            return <span key={i}>{part}</span>;
+                             let className = "";
+                             if (viewMode === 'blind') className = "bg-zinc-700 text-zinc-700 rounded-sm select-none";
+                             // Apply blur to everything in Blur Mode
+                             else if (viewMode === 'blur') className = "structure-blur";
+                             
+                             return <span key={i} className={className}>{part}</span>;
                         })}
-                    </p>
-
-                    {/* Indicator if recorded */}
-                    {hasRec && !isActive && (
-                        <div className="absolute right-2 top-2 w-2 h-2 rounded-full bg-red-500/70" title="Recorded"></div>
-                    )}
+                     </p>
+                     {hasRec && (
+                         <div className="absolute right-3 top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-sky-500 shadow-[0_0_8px_rgba(14,165,233,0.8)]" />
+                     )}
                   </div>
                 );
               })}
@@ -543,161 +522,113 @@ export const BlurReader: React.FC<BlurReaderProps> = ({ material, onBack }) => {
         </div>
       </main>
 
-      {/* --- Footer Controls (Fixed) --- */}
-      <div className="flex-none z-20 bg-[#121214] border-t border-zinc-800 pb-safe">
+      {/* --- Bottom Controls --- */}
+      <div className="flex-none bg-[#1c1c1e] border-t border-white/5 pb-6 pt-2">
          
-         {/* -- User Recording Bar (Conditionally Rendered) -- */}
+         {/* User Audio Bar */}
          {hasCurrentRecording && (
-             <div className="bg-zinc-900/50 border-b border-zinc-800 px-4 py-2 flex items-center justify-between animate-in slide-in-from-bottom-2">
-                 <div className="flex items-center gap-3">
-                     <div className="text-xs font-bold text-red-400 uppercase tracking-wider">My Recording</div>
-                     <button 
-                        onClick={playUserRecording}
-                        className="flex items-center gap-2 px-3 py-1 bg-zinc-800 hover:bg-zinc-700 rounded-full text-xs text-zinc-200 transition-colors"
-                     >
-                         {isUserPlaying ? <Pause size={12} fill="currentColor"/> : <Play size={12} fill="currentColor"/>}
-                         Play
-                     </button>
+             <div className="mx-auto max-w-2xl px-4 mb-2">
+                 <div className="flex items-center justify-between bg-zinc-800/50 rounded-lg p-2 px-3 border border-zinc-700/50">
+                    <div className="flex items-center gap-3">
+                        <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                        <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Your Recording</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                         <button 
+                           onClick={playUserRecording}
+                           className="p-1.5 bg-zinc-700 hover:bg-zinc-600 rounded-md text-white transition-colors"
+                         >
+                            {isUserPlaying ? <Square size={14} fill="currentColor" /> : <Play size={14} fill="currentColor" />}
+                         </button>
+                         <button 
+                           onClick={deleteUserRecording}
+                           className="p-1.5 hover:bg-red-500/20 text-zinc-500 hover:text-red-500 rounded-md transition-colors"
+                         >
+                            <Trash2 size={14} />
+                         </button>
+                    </div>
                  </div>
-                 <button 
-                    onClick={deleteUserRecording}
-                    className="p-1.5 text-zinc-500 hover:text-red-400 hover:bg-red-400/10 rounded-md transition-colors"
-                    title="Delete recording"
-                 >
-                     <Trash2 size={14} />
-                 </button>
              </div>
          )}
 
-         {/* -- Main Control Bar -- */}
-         <div className="max-w-3xl mx-auto w-full px-4 py-4 space-y-4">
+         {/* Main Control Deck */}
+         <div className="max-w-xl mx-auto px-6 grid grid-cols-[1fr_auto_1fr] items-center gap-4">
             
-            {/* Progress */}
-            <div className="flex items-center gap-3 text-[10px] md:text-xs font-mono text-zinc-500">
-                <span className="w-10 text-right">{formatTime(currentTime)}</span>
-                <div 
-                    className="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden cursor-pointer group"
-                    onClick={(e) => {
-                        if(!audioRef.current) return;
-                        const rect = e.currentTarget.getBoundingClientRect();
-                        const percent = (e.clientX - rect.left) / rect.width;
-                        audioRef.current.currentTime = percent * (duration || 1);
-                        setCurrentTime(audioRef.current.currentTime);
-                    }}
+            {/* Left: Mode & Loop */}
+            <div className="flex items-center gap-2">
+                {/* Playback Mode Toggle */}
+                <button 
+                    onClick={() => setPlaybackMode(m => m === 'article' ? 'sentence' : 'article')}
+                    className={`
+                        p-2 rounded-xl transition-all
+                        ${playbackMode === 'article' ? 'bg-zinc-800 text-zinc-400' : 'bg-sky-500/20 text-sky-400'}
+                    `}
+                    title={playbackMode === 'article' ? "Switch to Sentence Mode" : "Switch to Article Mode"}
                 >
-                    <div 
-                        className="h-full bg-sky-500 rounded-full group-hover:bg-sky-400 transition-all" 
-                        style={{ width: `${(currentTime / (duration || 1)) * 100}%` }}
-                    />
-                </div>
-                <span className="w-10">{formatTime(duration)}</span>
+                    {playbackMode === 'article' ? <BookOpen size={18} /> : <MessageSquare size={18} />}
+                </button>
+
+                {/* Loop Counter (Only in Sentence Mode) */}
+                {playbackMode === 'sentence' && (
+                    <button 
+                        onClick={cycleLoopSetting}
+                        className="flex flex-col items-center justify-center w-10 h-10 rounded-xl bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors"
+                    >
+                        <Repeat size={14} />
+                        <span className="text-[9px] font-bold uppercase mt-0.5">{getLoopLabel()}</span>
+                    </button>
+                )}
             </div>
 
-            <div className="flex items-center justify-between">
-                
-                {/* Left: Toggles */}
-                <div className="flex items-center gap-1 md:gap-2 w-1/4">
-                    <button
-                        onClick={() => setPlayMode(playMode === 'article' ? 'sentence' : 'article')}
-                        className={`flex flex-col md:flex-row items-center gap-1 px-2 py-1 rounded-lg transition-colors ${
-                            playMode === 'sentence' ? 'text-sky-400 bg-sky-950/30' : 'text-zinc-500'
-                        }`}
-                        title="Toggle Drill Mode (Pause/Loop per sentence)"
-                    >
-                        <Settings2 size={18} />
-                        <span className="text-[10px] font-bold uppercase">{playMode === 'article' ? 'Full' : 'Drill'}</span>
-                    </button>
+            {/* Center: Transport Controls */}
+            <div className="flex items-center gap-3 bg-zinc-900/80 p-2 rounded-full border border-white/5 shadow-xl">
+                 <button onClick={() => skipToSegment('prev')} className="p-3 text-zinc-400 hover:text-white transition-colors" title="Prev Sentence">
+                     <SkipBack size={20} fill="currentColor" />
+                 </button>
+                 
+                 <button onClick={() => seekRelative(-2)} className="hidden sm:block p-2 text-zinc-500 hover:text-zinc-300" title="-2s">
+                     <ChevronLeft size={18} />
+                 </button>
 
-                    {playMode === 'sentence' && (
-                        <button
-                            onClick={cycleLoopMode}
-                            className={`flex flex-col md:flex-row items-center gap-1 px-2 py-1 rounded-lg transition-colors ${
-                                loopCount !== 1 ? 'text-green-400 bg-green-950/30' : 'text-zinc-600'
-                            }`}
-                            title="Loop Count"
-                        >
-                            {getLoopIcon()}
-                            <span className="text-[10px] font-bold uppercase">
-                                {loopCount === Number.POSITIVE_INFINITY ? 'Inf' : `${loopCount}x`}
-                            </span>
-                        </button>
-                    )}
-                </div>
+                 <button 
+                    onClick={togglePlay}
+                    className="w-14 h-14 bg-sky-500 hover:bg-sky-400 text-white rounded-full flex items-center justify-center shadow-lg shadow-sky-500/20 transition-all transform hover:scale-105 active:scale-95"
+                 >
+                    {isPlaying ? <Pause size={24} fill="currentColor" /> : <Play size={24} fill="currentColor" className="ml-1" />}
+                 </button>
 
-                {/* Center: Playback */}
-                <div className="flex items-center gap-2 md:gap-4 justify-center flex-1">
-                    <button 
-                        onClick={() => skipToSegment('prev')}
-                        className="p-2 text-zinc-400 hover:text-white transition-colors"
-                        title="Previous Sentence"
-                    >
-                        <SkipBack size={20} />
-                    </button>
-                    
-                    <button 
-                        onClick={() => seekRelative(-3)}
-                        className="p-2 text-zinc-500 hover:text-zinc-300 transition-colors hidden sm:block"
-                        title="Back 3s"
-                    >
-                        <ChevronLeft size={20} />
-                    </button>
+                 <button onClick={() => seekRelative(2)} className="hidden sm:block p-2 text-zinc-500 hover:text-zinc-300" title="+2s">
+                     <ChevronRight size={18} />
+                 </button>
 
-                    <button 
-                        onClick={togglePlay}
-                        className="w-14 h-14 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 active:scale-95 transition-all shadow-xl shadow-white/5"
-                    >
-                        {isPlaying ? <Pause size={24} fill="currentColor" /> : <Play size={24} fill="currentColor" className="ml-1" />}
-                    </button>
+                 <button onClick={() => skipToSegment('next')} className="p-3 text-zinc-400 hover:text-white transition-colors" title="Next Sentence">
+                     <SkipForward size={20} fill="currentColor" />
+                 </button>
+            </div>
 
-                    <button 
-                        onClick={() => seekRelative(3)}
-                        className="p-2 text-zinc-500 hover:text-zinc-300 transition-colors hidden sm:block"
-                        title="Forward 3s"
-                    >
-                        <ChevronRight size={20} />
-                    </button>
+            {/* Right: Mic & Export */}
+            <div className="flex items-center justify-end gap-2">
+                <button 
+                  onClick={handleExport}
+                  disabled={isExporting}
+                  className="w-10 h-10 flex items-center justify-center text-zinc-500 hover:text-white hover:bg-white/10 rounded-full transition-colors"
+                  title="Export Recording"
+                >
+                   <Download size={18} />
+                </button>
 
-                    <button 
-                        onClick={() => skipToSegment('next')}
-                        className="p-2 text-zinc-400 hover:text-white transition-colors"
-                        title="Next Sentence"
-                    >
-                        <SkipForward size={20} />
-                    </button>
-                </div>
-
-                {/* Right: Actions */}
-                <div className="flex items-center gap-3 justify-end w-1/4">
-                    <button 
-                        onClick={handleExport}
-                        disabled={isExporting}
-                        className="p-2 text-zinc-500 hover:text-sky-400 transition-colors"
-                        title="Export all recordings"
-                    >
-                        <Download size={20} />
-                    </button>
-
-                    <button 
-                        onClick={toggleRecording}
-                        disabled={activeIndex === -1}
-                        className={`
-                            w-10 h-10 rounded-full flex items-center justify-center transition-all 
-                            ${activeIndex === -1 ? 'opacity-30 cursor-not-allowed text-zinc-600 border border-zinc-800' : ''}
-                            ${isRecording 
-                                ? 'bg-red-500 text-white animate-pulse shadow-lg shadow-red-500/40' 
-                                : 'bg-zinc-800 text-red-500 border border-zinc-700 hover:bg-zinc-700'
-                            }
-                        `}
-                        title="Record Sentence"
-                    >
-                        {isRecording ? <Square size={16} fill="currentColor" /> : <Mic size={20} />}
-                    </button>
-                </div>
-
+                <button 
+                    onClick={toggleRecording}
+                    className={`
+                        w-12 h-12 flex items-center justify-center rounded-full transition-all shadow-lg
+                        ${isRecording ? 'bg-red-500 text-white animate-pulse' : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'}
+                    `}
+                >
+                    {isRecording ? <Square size={18} fill="currentColor" /> : <Mic size={20} />}
+                </button>
             </div>
          </div>
       </div>
-
     </div>
   );
 };
