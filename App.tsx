@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+
+import React, { useState, useEffect } from 'react';
 import { Sparkles, Headphones, Loader2, Upload } from 'lucide-react';
 import { MOCK_MATERIALS } from './constants';
 import { Material } from './types';
@@ -9,10 +10,51 @@ import { ImportWizard } from './components/ImportWizard';
 
 export default function App() {
   const [activeMaterial, setActiveMaterial] = useState<Material | null>(null);
-  const [materials, setMaterials] = useState<Material[]>(MOCK_MATERIALS);
+  const [materials, setMaterials] = useState<Material[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [showImport, setShowImport] = useState(false);
+  const [hasLoaded, setHasLoaded] = useState(false);
+
+  // Load from LocalStorage on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('blurlisten_materials');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // We merge saved materials with mocks, avoiding duplicates by ID
+        const mockIds = new Set(MOCK_MATERIALS.map(m => m.id));
+        const customMaterials = parsed.filter((m: Material) => !mockIds.has(m.id));
+        setMaterials([...MOCK_MATERIALS, ...customMaterials]);
+      } else {
+        setMaterials(MOCK_MATERIALS);
+      }
+    } catch (e) {
+      console.error("Failed to load materials", e);
+      setMaterials(MOCK_MATERIALS);
+    }
+    setHasLoaded(true);
+  }, []);
+
+  // Save to LocalStorage whenever materials change
+  useEffect(() => {
+    if (!hasLoaded) return;
+    
+    // Filter out materials that are mocks (we don't need to double-save them if they are in code)
+    // Also, strictly speaking, we can't persistent Audio BLOB URLs effectively in localStorage.
+    // So if the user refreshes, imported audio might break unless re-uploaded.
+    // For this demo, we will persist the Text Structure, but the audioUrl might become invalid.
+    
+    const customMaterials = materials.filter(m => !MOCK_MATERIALS.some(mock => mock.id === m.id));
+    
+    // Safety check for size (simplified)
+    try {
+       localStorage.setItem('blurlisten_materials', JSON.stringify(customMaterials));
+    } catch (e) {
+       console.warn("Storage quota exceeded, could not save new material locally.");
+    }
+  }, [materials, hasLoaded]);
+
 
   const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -21,14 +63,14 @@ export default function App() {
     setIsGenerating(true);
     const newMaterial = await generateMaterial(prompt);
     if (newMaterial) {
-      setMaterials([newMaterial, ...materials]);
+      setMaterials(prev => [newMaterial, ...prev]);
       setPrompt('');
     }
     setIsGenerating(false);
   };
 
   const handleImport = (material: Material) => {
-    setMaterials([material, ...materials]);
+    setMaterials(prev => [material, ...prev]);
     setShowImport(false);
     // Optional: Immediately open the new material
     // setActiveMaterial(material); 

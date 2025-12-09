@@ -1,15 +1,23 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Material } from "../types";
 
-// This is a simulated service generator. 
-// In a real app, we would use this to generate the text content.
-// Since we can't generate the *aligned audio* easily on the client side without a complex TTS pipeline,
-// we will use this to generate the *text* structure which the mock player can then "simulate" playing.
-
-const genAI = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Helper to safely get the AI client
+// We initialize this inside functions to prevent the app from crashing on load 
+// if the process.env is undefined in certain deployment environments.
+const getGenAI = () => {
+  const apiKey = process.env.API_KEY;
+  if (!apiKey) {
+    console.warn("API_KEY is missing. Generative features will fail.");
+    return null;
+  }
+  return new GoogleGenAI({ apiKey });
+};
 
 export const generateMaterial = async (topic: string): Promise<Material | null> => {
   try {
+    const ai = getGenAI();
+    if (!ai) return null;
+
     const model = "gemini-2.5-flash";
     const prompt = `Generate a short educational article about "${topic}".
     The output must be a valid JSON object matching the following schema.
@@ -31,7 +39,7 @@ export const generateMaterial = async (topic: string): Promise<Material | null> 
       ]
     }`;
 
-    const response = await genAI.models.generateContent({
+    const response = await ai.models.generateContent({
       model: model,
       contents: prompt,
       config: {
@@ -90,7 +98,10 @@ export const generateMaterial = async (topic: string): Promise<Material | null> 
 
 export const getWordDefinition = async (word: string, context: string): Promise<string> => {
   try {
-    const response = await genAI.models.generateContent({
+    const ai = getGenAI();
+    if (!ai) return "API Key missing";
+
+    const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: `Define the word "${word}" briefly (under 30 words) as it is used in this context: "${context}". Return just the definition.`,
     });
